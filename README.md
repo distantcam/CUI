@@ -48,7 +48,8 @@ class Program
                 return Task.CompletedTask;
             });
 
-        app.Run().GetAwaiter().GetResult();
+        app.Run();
+        // Or app.RunAsync().GetAwaiter().GetResult();
     }
 }
 ```

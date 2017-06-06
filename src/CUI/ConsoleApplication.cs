@@ -1,6 +1,8 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using static System.Console;
 using static System.ConsoleColor;
@@ -31,7 +33,7 @@ namespace CUI
             return screenConfig;
         }
 
-        public async Task Run()
+        public async Task RunAsync()
         {
             var currentScreen = startScreen;
 
@@ -53,6 +55,23 @@ namespace CUI
 
                 await screens[currentScreen].Display();
             }
+        }
+
+        public void Run()
+        {
+            var prevCtx = SynchronizationContext.Current;
+            try
+            {
+                var syncCtx = new SingleThreadSynchronizationContext();
+                SynchronizationContext.SetSynchronizationContext(syncCtx);
+
+                var t = RunAsync();
+                t.ContinueWith(delegate { syncCtx.Complete(); }, TaskScheduler.Default);
+
+                syncCtx.RunOnCurrentThread();
+                t.GetAwaiter().GetResult();
+            }
+            finally { SynchronizationContext.SetSynchronizationContext(prevCtx); }
         }
     }
 
@@ -256,5 +275,28 @@ namespace CUI
         {
             ConsoleUtil.SetColors(foreground, background);
         }
+    }
+
+    sealed class SingleThreadSynchronizationContext : SynchronizationContext
+    {
+        private readonly BlockingCollection<KeyValuePair<SendOrPostCallback, object>> queue =
+            new BlockingCollection<KeyValuePair<SendOrPostCallback, object>>();
+
+        public override void Post(SendOrPostCallback d, object state)
+        {
+            if (d == null) throw new ArgumentNullException("d");
+            queue.Add(new KeyValuePair<SendOrPostCallback, object>(d, state));
+        }
+
+        public override void Send(SendOrPostCallback d, object state) =>
+            throw new NotSupportedException("Synchronously sending is not supported.");
+
+        public void RunOnCurrentThread()
+        {
+            foreach (var workItem in queue.GetConsumingEnumerable())
+                workItem.Key(workItem.Value);
+        }
+
+        public void Complete() => queue.CompleteAdding();
     }
 }
